@@ -484,24 +484,30 @@
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     
     <script>
-        // Supabase配置
+        // Supabase配置（沿用原配置，通过表名和存储桶隔离）
         const SUPABASE_URL = 'https://mibkhbxcttbcmevlyljx.supabase.co';
-        const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1pYmtoYnhjdHRiY21ldmx5bGp4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjI0MTEzMjQsImV4cCI6MjA3Nzk4NzMyNH0.32OKyzrtk6zlhvkjSoFtISYuQmhMPFE5MgEOHJLPEvU';
+        const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1pYmtoYnhjdHRiY21ldmx5bGp4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjI0MTEzMjQsImV4cCI6MjA3Nzk4NzMyNH0.32OKyzrtk6zlhvkjSoFtISYuQmhMPFE5NHEOHJLPEvU';
         
         // 初始化Supabase客户端
         const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
         
-        // 云端存储类 - 使用真实的Supabase
+        // 云端存储类 - 2518班独立表和存储桶
         class CloudStorage {
             constructor() {
-                console.log('初始化Supabase云端存储...');
+                // 2518班专属配置（与2517班区分）
+                this.config = {
+                    messageTable: 'class2518_messages', // 独立留言表
+                    imageTable: 'class2518_images',     // 独立图片信息表
+                    storageBucket: 'class2518-photos'   // 独立存储桶
+                };
+                console.log('初始化2518班专属Supabase存储...');
             }
             
-            // 保存留言到云端
+            // 保存留言到云端（独立表）
             async saveMessage(author, content) {
                 try {
                     const { data, error } = await supabase
-                        .from('messages')
+                        .from(this.config.messageTable)
                         .insert([
                             { 
                                 author: author, 
@@ -519,11 +525,11 @@
                 }
             }
             
-            // 从云端加载留言
+            // 从云端加载留言（独立表）
             async loadMessages() {
                 try {
                     const { data, error } = await supabase
-                        .from('messages')
+                        .from(this.config.messageTable)
                         .select('*')
                         .order('created_at', { ascending: false });
                     
@@ -535,11 +541,11 @@
                 }
             }
             
-            // 删除留言
+            // 删除留言（独立表）
             async deleteMessage(id) {
                 try {
                     const { error } = await supabase
-                        .from('messages')
+                        .from(this.config.messageTable)
                         .delete()
                         .eq('id', id);
                     
@@ -551,20 +557,20 @@
                 }
             }
             
-            // 保存图片到云端
+            // 保存图片到云端（独立存储桶+独立表）
             async saveImage(title, imageData) {
                 try {
                     // 将base64图片数据转换为blob
                     const response = await fetch(imageData);
                     const blob = await response.blob();
                     
-                    // 生成唯一文件名
-                    const fileName = `image_${Date.now()}.jpg`;
+                    // 生成唯一文件名（包含2518标识）
+                    const fileName = `2518_${Date.now()}.jpg`;
                     
-                    // 上传到Supabase存储
+                    // 上传到2518班专属存储桶
                     const { data: uploadData, error: uploadError } = await supabase
                         .storage
-                        .from('class-images')
+                        .from(this.config.storageBucket)
                         .upload(fileName, blob);
                     
                     if (uploadError) throw uploadError;
@@ -572,12 +578,12 @@
                     // 获取公开URL
                     const { data: urlData } = supabase
                         .storage
-                        .from('class-images')
+                        .from(this.config.storageBucket)
                         .getPublicUrl(fileName);
                     
-                    // 保存图片信息到数据库
+                    // 保存图片信息到2518班独立表
                     const { data, error } = await supabase
-                        .from('images')
+                        .from(this.config.imageTable)
                         .insert([
                             { 
                                 title: title, 
@@ -595,11 +601,11 @@
                 }
             }
             
-            // 从云端加载图片
+            // 从云端加载图片（独立表）
             async loadImages() {
                 try {
                     const { data, error } = await supabase
-                        .from('images')
+                        .from(this.config.imageTable)
                         .select('*')
                         .order('created_at', { ascending: false });
                     
@@ -611,22 +617,22 @@
                 }
             }
             
-            // 删除图片
+            // 删除图片（独立存储桶+独立表）
             async deleteImage(id, imageUrl) {
                 try {
-                    // 从数据库删除记录
+                    // 从2518班独立表删除记录
                     const { error: dbError } = await supabase
-                        .from('images')
+                        .from(this.config.imageTable)
                         .delete()
                         .eq('id', id);
                     
                     if (dbError) throw dbError;
                     
-                    // 从存储中删除文件
+                    // 从2518班专属存储桶删除文件
                     const fileName = imageUrl.split('/').pop();
                     const { error: storageError } = await supabase
                         .storage
-                        .from('class-images')
+                        .from(this.config.storageBucket)
                         .remove([fileName]);
                     
                     if (storageError) throw storageError;
@@ -639,7 +645,7 @@
             }
         }
         
-        // 留言板功能 - 使用真实的Supabase
+        // 留言板功能（复用逻辑，对接2518独立表）
         class MessageBoard {
             constructor(cloudStorage) {
                 this.cloudStorage = cloudStorage;
@@ -699,10 +705,10 @@
                 
                 messageList.innerHTML = messages.map(message => `
                     <li class="message-item" data-id="${message.id}">
-                        <!-- <button class="message-delete" onclick="messageBoard.deleteMessage(${message.id})">×</button> -->
+                        <button class="message-delete" onclick="messageBoard.deleteMessage(${message.id})">×</button>
                         <div class="message-header">
                             <span class="message-author">${this.escapeHtml(message.author)}</span>
-                            <!-- <span class="message-date">${this.formatDate(message.created_at)}</span> -->
+                            <span class="message-date">${this.formatDate(message.created_at)}</span>
                         </div>
                         <div class="message-content">${this.escapeHtml(message.content)}</div>
                     </li>
@@ -788,7 +794,7 @@
             }
         }
         
-        // 相册功能 - 使用真实的Supabase
+        // 相册功能（复用逻辑，对接2518独立存储桶和表）
         class Gallery {
             constructor(cloudStorage) {
                 this.cloudStorage = cloudStorage;
@@ -957,10 +963,10 @@
                 document.getElementById(targetId).classList.add('active');
             });
         });
-
+        
         // 初始化应用
         document.addEventListener('DOMContentLoaded', async () => {
-            // 初始化云端存储
+            // 初始化云端存储（2518班专属）
             const cloudStorage = new CloudStorage();
             
             // 初始化留言板
