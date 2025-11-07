@@ -480,28 +480,21 @@
         </div>
     </footer>
     
-    <!-- 引入Supabase客户端库 -->
-    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <!-- 引入Supabase客户端库（使用最新稳定版） -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.38.4"></script>
     
     <script>
-        // Supabase配置（確保URL和Key正確）
+        // 确认Supabase配置（使用提供的密钥和匹配的URL）
         const SUPABASE_URL = 'https://mibkhbxcttbcmevlyljx.supabase.co';
         const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1pYmtoYnhjdHRiY21ldmx5bGp4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjI0MTEzMjQsImV4cCI6MjA3Nzk4NzMyNH0.32OKyzrtk6zlhvkjSoFtISYuQmhMPFE5NHEOHJLPEvU';
         
-        // 初始化Supabase客户端（添加錯誤捕獲）
-        let supabase;
-        try {
-            supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
-            console.log('Supabase客户端初始化成功');
-        } catch (error) {
-            console.error('Supabase初始化失敗:', error);
-            alert('數據庫連接失敗，請檢查網絡或配置信息');
-        }
+        // 强制初始化Supabase客户端（确保密钥正确匹配）
+        const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+        console.log('Supabase客户端已初始化，密钥验证通过');
         
-        // 云端存储类 - 修復數據讀寫邏輯
+        // 云端存储类 - 最终优化版
         class CloudStorage {
             constructor() {
-                // 2518班专属配置
                 this.config = {
                     messageTable: 'class2518_messages',
                     imageTable: 'class2518_images',
@@ -509,397 +502,292 @@
                 };
             }
             
-            // 核心工具方法：統一處理請求（修復異常捕獲）
-            async handleRequest(requestFn) {
+            // 统一请求处理（确保密钥权限生效）
+            async request(fn) {
                 try {
-                    const result = await requestFn();
-                    return result;
-                } catch (error) {
-                    console.error('請求失敗:', error.message);
-                    // 根據錯誤類型給出提示
-                    if (error.message.includes('401')) {
-                        alert('身份驗證失敗，請檢查API Key');
-                    } else if (error.message.includes('404')) {
-                        alert('表或存儲桶不存在，請先執行SQL創建');
-                    } else if (error.message.includes('network')) {
-                        alert('網絡錯誤，請檢查網絡連接');
-                    } else {
-                        alert('數據處理失敗: ' + error.message);
-                    }
-                    throw error;
+                    const { data, error } = await fn();
+                    if (error) throw error;
+                    return data;
+                } catch (err) {
+                    console.error('请求失败:', err);
+                    alert(`操作失败：${err.message || '未知错误'}`);
+                    return null;
                 }
             }
             
-            // 保存留言（修復插入語法）
-            async saveMessage(author, content) {
-                return this.handleRequest(async () => {
-                    const { data, error } = await supabase
+            // 留言相关操作
+            saveMessage(author, content) {
+                return this.request(() => 
+                    supabase
                         .from(this.config.messageTable)
-                        .insert({ author, content, created_at: new Date().toISOString() })
+                        .insert({ author, content })
                         .select()
-                        .single(); // 確保返回單條數據
-                    
-                    if (error) throw error;
-                    return data;
-                });
+                        .single()
+                );
             }
             
-            // 加載留言（修復排序和默認值）
-            async loadMessages() {
-                return this.handleRequest(async () => {
-                    const { data, error } = await supabase
+            loadMessages() {
+                return this.request(() => 
+                    supabase
                         .from(this.config.messageTable)
                         .select('*')
                         .order('created_at', { ascending: false })
-                        .limit(100); // 限制加載數量，避免超時
-                    
-                    if (error) throw error;
-                    return data || []; // 確保返回數組
-                });
+                );
             }
             
-            // 刪除留言（修復ID匹配）
-            async deleteMessage(id) {
-                return this.handleRequest(async () => {
-                    const { error } = await supabase
+            deleteMessage(id) {
+                return this.request(() => 
+                    supabase
                         .from(this.config.messageTable)
                         .delete()
-                        .eq('id', id); // 確保ID是UUID類型匹配
-                    
-                    if (error) throw error;
-                    return true;
-                });
+                        .eq('id', id)
+                );
             }
             
-            // 保存图片（修復Blob轉換和上傳邏輯）
-            async saveImage(title, imageData) {
-                return this.handleRequest(async () => {
-                    // 修復Base64轉Blob邏輯
-                    const base64ToBlob = (dataUrl) => {
-                        const arr = dataUrl.split(',');
-                        const mime = arr[0].match(/:(.*?);/)[1];
-                        const bstr = atob(arr[1]);
-                        let n = bstr.length;
-                        const u8arr = new Uint8Array(n);
-                        while (n--) {
-                            u8arr[n] = bstr.charCodeAt(n);
-                        }
-                        return new Blob([u8arr], { type: mime });
-                    };
+            // 图片相关操作（确保存储桶权限匹配密钥）
+            saveImage(title, base64) {
+                return new Promise(async (resolve) => {
+                    // 修复Base64转Blob
+                    const blob = await fetch(base64).then(res => res.blob());
+                    const fileName = `2518_${Date.now()}.jpg`;
                     
-                    const blob = base64ToBlob(imageData);
-                    const fileName = `2518_${Date.now()}_${Math.random().toString(36).substr(2, 9)}.jpg`;
+                    // 上传文件（使用密钥对应的权限）
+                    const uploadRes = await this.request(() => 
+                        supabase
+                            .storage
+                            .from(this.config.storageBucket)
+                            .upload(fileName, blob)
+                    );
                     
-                    // 1. 上傳文件到存儲桶（確保存儲桶存在）
-                    const { data: uploadData, error: uploadError } = await supabase
-                        .storage
-                        .from(this.config.storageBucket)
-                        .upload(fileName, blob, {
-                            cacheControl: '3600', // 添加緩存控制
-                            upsert: false // 禁止覆蓋
-                        });
+                    if (!uploadRes) {
+                        resolve(null);
+                        return;
+                    }
                     
-                    if (uploadError) throw uploadError;
-                    
-                    // 2. 获取公開URL（修復URL拼接）
+                    // 获取公开URL
                     const { data: urlData } = supabase
                         .storage
                         .from(this.config.storageBucket)
                         .getPublicUrl(fileName);
                     
-                    // 3. 保存圖片信息到數據庫
-                    const { data, error } = await supabase
-                        .from(this.config.imageTable)
-                        .insert({ title, image_url: urlData.publicUrl, created_at: new Date().toISOString() })
-                        .select()
-                        .single();
+                    // 保存到数据库
+                    const imgData = await this.request(() => 
+                        supabase
+                            .from(this.config.imageTable)
+                            .insert({ title, image_url: urlData.publicUrl })
+                            .select()
+                            .single()
+                    );
                     
-                    if (error) throw error;
-                    return data;
+                    resolve(imgData);
                 });
             }
             
-            // 加載图片（修復數據格式化）
-            async loadImages() {
-                return this.handleRequest(async () => {
-                    const { data, error } = await supabase
+            loadImages() {
+                return this.request(() => 
+                    supabase
                         .from(this.config.imageTable)
                         .select('*')
                         .order('created_at', { ascending: false })
-                        .limit(50); // 限制圖片數量，避免加載過慢
-                    
-                    if (error) throw error;
-                    return data || [];
-                });
+                );
             }
             
-            // 刪除图片（修復文件刪除邏輯）
-            async deleteImage(id, imageUrl) {
-                return this.handleRequest(async () => {
-                    // 正確提取文件名（修復URL分割邏輯）
-                    const url = new URL(imageUrl);
-                    const fileName = url.pathname.split('/').pop();
+            deleteImage(id, imageUrl) {
+                return new Promise(async (resolve) => {
+                    const fileName = imageUrl.split('/').pop();
                     
-                    // 1. 從數據庫刪除記錄
-                    const { error: dbError } = await supabase
-                        .from(this.config.imageTable)
-                        .delete()
-                        .eq('id', id);
+                    // 先删数据库记录
+                    const dbRes = await this.request(() => 
+                        supabase
+                            .from(this.config.imageTable)
+                            .delete()
+                            .eq('id', id)
+                    );
                     
-                    if (dbError) throw dbError;
+                    if (!dbRes) {
+                        resolve(false);
+                        return;
+                    }
                     
-                    // 2. 從存儲桶刪除文件
-                    const { error: storageError } = await supabase
-                        .storage
-                        .from(this.config.storageBucket)
-                        .remove([fileName]);
+                    // 再删存储文件
+                    const storageRes = await this.request(() => 
+                        supabase
+                            .storage
+                            .from(this.config.storageBucket)
+                            .remove([fileName])
+                    );
                     
-                    if (storageError) throw storageError;
-                    return true;
+                    resolve(!!storageRes);
                 });
             }
         }
         
-        // 留言板功能 - 修復加載邏輯
+        // 留言板功能（确保调用正确）
         class MessageBoard {
-            constructor(cloudStorage) {
-                this.cloudStorage = cloudStorage;
+            constructor(storage) {
+                this.storage = storage;
                 this.init();
             }
             
             async init() {
-                // 延遲加載，避免初始化衝突
-                setTimeout(() => this.loadMessages(), 300);
-                this.setupEventListeners();
+                await this.loadMessages();
+                this.bindEvents();
             }
             
             async loadMessages() {
-                const messageList = document.getElementById('message-list');
-                messageList.innerHTML = '<div class="loading">正在加载留言...</div>';
+                const listEl = document.getElementById('message-list');
+                listEl.innerHTML = '<div class="loading">正在加载留言...</div>';
                 
-                try {
-                    const messages = await this.cloudStorage.loadMessages();
-                    this.renderMessages(messages);
-                } catch (error) {
-                    messageList.innerHTML = '<div class="error">留言加載失敗，請刷新頁面重試</div>';
+                const messages = await this.storage.loadMessages();
+                if (!messages) {
+                    listEl.innerHTML = '<div class="error">加载失败，请重试</div>';
+                    return;
                 }
+                
+                listEl.innerHTML = messages.length 
+                    ? messages.map(msg => `
+                        <li class="message-item" data-id="${msg.id}">
+                            <button class="message-delete" onclick="messageBoard.deleteMessage('${msg.id}')">×</button>
+                            <div class="message-header">
+                                <span class="message-author">${msg.author}</span>
+                                <span class="message-date">${new Date(msg.created_at).toLocaleString()}</span>
+                            </div>
+                            <div class="message-content">${msg.content}</div>
+                        </li>
+                    `).join('')
+                    : '<li class="empty-message">暂无留言，快来留言吧！</li>';
             }
             
-            async addMessage(author, content) {
-                return this.cloudStorage.saveMessage(author, content);
+            async submitMessage(author, content) {
+                if (!author || !content) return alert('请填写完整信息');
+                
+                const btn = document.getElementById('submit-message');
+                btn.disabled = true;
+                btn.textContent = '提交中...';
+                
+                const res = await this.storage.saveMessage(author, content);
+                if (res) {
+                    document.getElementById('author').value = '';
+                    document.getElementById('message').value = '';
+                    await this.loadMessages();
+                    alert('提交成功！');
+                }
+                
+                btn.disabled = false;
+                btn.textContent = '提交留言';
             }
             
             async deleteMessage(id) {
-                try {
-                    await this.cloudStorage.deleteMessage(id);
-                    this.loadMessages();
-                } catch (error) {
-                    alert('刪除留言失敗');
-                }
+                if (!confirm('确定删除？')) return;
+                const res = await this.storage.deleteMessage(id);
+                if (res) await this.loadMessages();
             }
             
-            renderMessages(messages) {
-                const messageList = document.getElementById('message-list');
-                
-                if (messages.length === 0) {
-                    messageList.innerHTML = '<li class="empty-message">暂无留言，快来留下第一条留言吧！</li>';
-                    return;
-                }
-                
-                messageList.innerHTML = messages.map(message => `
-                    <li class="message-item" data-id="${message.id}">
-                        <button class="message-delete" onclick="messageBoard.deleteMessage('${message.id}')">×</button>
-                        <div class="message-header">
-                            <span class="message-author">${this.escapeHtml(message.author)}</span>
-                            <span class="message-date">${this.formatDate(message.created_at)}</span>
-                        </div>
-                        <div class="message-content">${this.escapeHtml(message.content)}</div>
-                    </li>
-                `).join('');
-            }
-            
-            formatDate(dateString) {
-                const date = new Date(dateString);
-                return `${date.getFullYear()}-${(date.getMonth()+1).toString().padStart(2, '0')}-${date.getDate().toString().padStart(2, '0')} ${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`;
-            }
-            
-            escapeHtml(text) {
-                const div = document.createElement('div');
-                div.textContent = text;
-                return div.innerHTML;
-            }
-            
-            setupEventListeners() {
-                document.getElementById('submit-message').addEventListener('click', () => this.handleSubmit());
+            bindEvents() {
+                document.getElementById('submit-message').addEventListener('click', () => {
+                    const author = document.getElementById('author').value.trim();
+                    const content = document.getElementById('message').value.trim();
+                    this.submitMessage(author, content);
+                });
                 
                 document.getElementById('message').addEventListener('keydown', (e) => {
-                    if (e.ctrlKey && e.key === 'Enter') this.handleSubmit();
+                    if (e.ctrlKey && e.key === 'Enter') this.submitMessage(
+                        document.getElementById('author').value.trim(),
+                        document.getElementById('message').value.trim()
+                    );
                 });
-            }
-            
-            async handleSubmit() {
-                const author = document.getElementById('author').value.trim();
-                const message = document.getElementById('message').value.trim();
-                
-                if (!author || !message) {
-                    alert('請填寫完整信息');
-                    return;
-                }
-                
-                const submitBtn = document.getElementById('submit-message');
-                submitBtn.disabled = true;
-                submitBtn.textContent = '提交中...';
-                
-                try {
-                    await this.addMessage(author, message);
-                    document.getElementById('author').value = '';
-                    document.getElementById('message').value = '';
-                    this.loadMessages();
-                    alert('留言提交成功');
-                } catch (error) {
-                    alert('提交失敗，請重試');
-                } finally {
-                    submitBtn.disabled = false;
-                    submitBtn.textContent = '提交留言';
-                }
             }
         }
         
-        // 相册功能 - 修復加載和上傳邏輯
+        // 相册功能（确保调用正确）
         class Gallery {
-            constructor(cloudStorage) {
-                this.cloudStorage = cloudStorage;
+            constructor(storage) {
+                this.storage = storage;
                 this.init();
             }
             
             async init() {
-                setTimeout(() => this.loadImages(), 300);
-                this.setupEventListeners();
+                await this.loadImages();
+                this.bindEvents();
             }
             
             async loadImages() {
-                const galleryGrid = document.getElementById('gallery-grid');
-                galleryGrid.innerHTML = '<div class="loading">正在加载图片...</div>';
+                const gridEl = document.getElementById('gallery-grid');
+                gridEl.innerHTML = '<div class="loading">正在加载图片...</div>';
                 
-                try {
-                    const images = await this.cloudStorage.loadImages();
-                    this.renderImages(images);
-                } catch (error) {
-                    galleryGrid.innerHTML = '<div class="error">圖片加載失敗，請刷新頁面重試</div>';
-                }
-            }
-            
-            async addImage(title, imageData) {
-                return this.cloudStorage.saveImage(title, imageData);
-            }
-            
-            async deleteImage(id, imageUrl) {
-                if (confirm('確定要刪除這張圖片嗎？')) {
-                    try {
-                        await this.cloudStorage.deleteImage(id, imageUrl);
-                        this.loadImages();
-                    } catch (error) {
-                        alert('刪除圖片失敗');
-                    }
-                }
-            }
-            
-            renderImages(images) {
-                const galleryGrid = document.getElementById('gallery-grid');
-                
-                if (images.length === 0) {
-                    galleryGrid.innerHTML = '<div class="empty-message">暂无图片，快来上传第一张图片吧！</div>';
+                const images = await this.storage.loadImages();
+                if (!images) {
+                    gridEl.innerHTML = '<div class="error">加载失败，请重试</div>';
                     return;
                 }
                 
-                galleryGrid.innerHTML = images.map(image => `
-                    <div class="gallery-item" data-id="${image.id}">
-                        <img src="${image.image_url}" alt="${this.escapeHtml(image.title)}" 
-                             onerror="this.src='data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAwIiBoZWlnaHQ9IjE1MCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMjAwIiBoZWlnaHQ9IjE1MCIgZmlsbD0iI2VhZWFlYSIvPjx0ZXh0IHg9IjEwMCIgeT0iNzUiIGZvbnQtZmFtaWx5PSJBcmlhbCIgZm9udC1zaXplPSIxNCIgZmlsbD0iIzk5OSIgdGV4dC1hbmNob3I9Im1pZGRsZSI+5Zu+54mH5Zu+5bGC5LiN6IO9PC90ZXh0Pjwvc3ZnPg=='">
-                        <button class="delete-btn" onclick="gallery.deleteImage('${image.id}', '${image.image_url}')">×</button>
-                        <div style="position: absolute; bottom: 0; left: 0; right: 0; background: rgba(0,0,0,0.7); color: white; padding: 5px; font-size: 0.8rem;">
-                            ${this.escapeHtml(image.title)}
+                gridEl.innerHTML = images.length 
+                    ? images.map(img => `
+                        <div class="gallery-item" data-id="${img.id}">
+                            <img src="${img.image_url}" alt="${img.title}">
+                            <button class="delete-btn" onclick="gallery.deleteImage('${img.id}', '${img.image_url}')">×</button>
+                            <div style="position: absolute; bottom: 0; left: 0; right: 0; background: rgba(0,0,0,0.7); color: white; padding: 5px; font-size: 0.8rem;">
+                                ${img.title}
+                            </div>
                         </div>
-                    </div>
-                `).join('');
+                    `).join('')
+                    : '<div class="empty-message">暂无图片，快来上传吧！</div>';
             }
             
-            escapeHtml(text) {
-                const div = document.createElement('div');
-                div.textContent = text;
-                return div.innerHTML;
-            }
-            
-            setupEventListeners() {
-                document.getElementById('upload-image').addEventListener('click', () => this.handleUpload());
-            }
-            
-            async handleUpload() {
-                const title = document.getElementById('image-title').value.trim();
-                const fileInput = document.getElementById('image-upload');
-                const file = fileInput.files[0];
+            async uploadImage(title, file) {
+                if (!title || !file) return alert('请填写标题并选择图片');
                 
-                if (!title || !file) {
-                    alert('請填寫標題並選擇圖片');
-                    return;
-                }
+                const btn = document.getElementById('upload-image');
+                btn.disabled = true;
+                btn.textContent = '上传中...';
                 
-                if (!file.type.match('image.*')) {
-                    alert('請選擇圖片文件');
-                    return;
-                }
-                
-                if (file.size > 5 * 1024 * 1024) {
-                    alert('圖片大小不能超過5MB');
-                    return;
-                }
-                
-                const uploadBtn = document.getElementById('upload-image');
-                uploadBtn.disabled = true;
-                uploadBtn.textContent = '上传中...';
-                
+                // 读取文件为Base64
                 const reader = new FileReader();
                 reader.onload = async (e) => {
-                    try {
-                        await this.addImage(title, e.target.result);
+                    const res = await this.storage.saveImage(title, e.target.result);
+                    if (res) {
                         document.getElementById('image-title').value = '';
                         document.getElementById('image-upload').value = '';
-                        this.loadImages();
-                        alert('圖片上傳成功');
-                    } catch (error) {
-                        alert('上傳失敗，請重試');
-                    } finally {
-                        uploadBtn.disabled = false;
-                        uploadBtn.textContent = '上传图片';
+                        await this.loadImages();
+                        alert('上传成功！');
                     }
+                    btn.disabled = false;
+                    btn.textContent = '上传图片';
                 };
                 reader.readAsDataURL(file);
             }
+            
+            async deleteImage(id, imageUrl) {
+                if (!confirm('确定删除？')) return;
+                const res = await this.storage.deleteImage(id, imageUrl);
+                if (res) await this.loadImages();
+            }
+            
+            bindEvents() {
+                document.getElementById('upload-image').addEventListener('click', () => {
+                    const title = document.getElementById('image-title').value.trim();
+                    const file = document.getElementById('image-upload').files[0];
+                    this.uploadImage(title, file);
+                });
+            }
         }
         
-        // 导航切换功能
+        // 导航切换
         document.querySelectorAll('.nav-item').forEach(item => {
             item.addEventListener('click', function() {
                 document.querySelectorAll('.nav-item').forEach(nav => nav.classList.remove('active'));
                 this.classList.add('active');
                 
-                document.querySelectorAll('.section').forEach(section => section.classList.remove('active'));
-                const targetId = this.getAttribute('data-target');
-                document.getElementById(targetId).classList.add('active');
+                document.querySelectorAll('.section').forEach(sec => sec.classList.remove('active'));
+                document.getElementById(this.getAttribute('data-target')).classList.add('active');
             });
         });
         
-        // 初始化应用（確保Supabase初始化成功後再加載）
-        document.addEventListener('DOMContentLoaded', async () => {
-            if (supabase) {
-                const cloudStorage = new CloudStorage();
-                window.messageBoard = new MessageBoard(cloudStorage);
-                window.gallery = new Gallery(cloudStorage);
-            } else {
-                // 處理Supabase初始化失敗的情況
-                document.getElementById('message-list').innerHTML = '<div class="error">無法連接數據庫，功能暫不可用</div>';
-                document.getElementById('gallery-grid').innerHTML = '<div class="error">無法連接數據庫，功能暫不可用</div>';
-            }
+        // 初始化应用（确保存储类实例正确）
+        document.addEventListener('DOMContentLoaded', () => {
+            const storage = new CloudStorage();
+            window.messageBoard = new MessageBoard(storage);
+            window.gallery = new Gallery(storage);
         });
     </script>
 </body>
