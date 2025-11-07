@@ -480,89 +480,100 @@
         </div>
     </footer>
     
-    <!-- 引入Supabase客户端库（使用最新稳定版） -->
-    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.38.4"></script>
+    <!-- 引入Supabase客户端库 -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     
     <script>
-        // 确认Supabase配置（使用提供的密钥和匹配的URL）
+        // Supabase配置（沿用原配置，通过表名和存储桶隔离）
         const SUPABASE_URL = 'https://mibkhbxcttbcmevlyljx.supabase.co';
-        const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1pYmtoYnhjdHRiY21ldmx5bGp4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjI0MTEzMjQsImV4cCI6MjA3Nzk4NzMyNH0.32OKyzrtk6zlhvkjSoFtISYuQmhMPFE5NHEOHJLPEvU';
+        const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1pYmtoYnhjdHRiY21ldmx5bGp4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjI0MTEzMjQsImV4cCI6MjA3Nzk4NzMyNH0.32OKyzrtk6zlhvkjSoFtISYuQmhMPFE5MgEOHJLPEvU';
         
-        // 强制初始化Supabase客户端（确保密钥正确匹配）
+        // 初始化Supabase客户端
         const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
-        console.log('Supabase客户端已初始化，密钥验证通过');
         
-        // 云端存储类 - 最终优化版
+        // 云端存储类 - 2518班独立表和存储桶
         class CloudStorage {
             constructor() {
+                // 2518班专属配置（与2517班区分）
                 this.config = {
-                    messageTable: 'class2518_messages',
-                    imageTable: 'class2518_images',
-                    storageBucket: 'class2518-photos'
+                    messageTable: 'class2518_messages', // 独立留言表
+                    imageTable: 'class2518_images',     // 独立图片信息表
+                    storageBucket: 'class2518-photos'   // 独立存储桶
                 };
+                console.log('初始化2518班专属Supabase存储...');
             }
             
-            // 统一请求处理（确保密钥权限生效）
-            async request(fn) {
+            // 保存留言到云端（独立表）
+            async saveMessage(author, content) {
                 try {
-                    const { data, error } = await fn();
+                    const { data, error } = await supabase
+                        .from(this.config.messageTable)
+                        .insert([
+                            { 
+                                author: author, 
+                                content: content,
+                                created_at: new Date().toISOString()
+                            }
+                        ])
+                        .select();
+                    
                     if (error) throw error;
-                    return data;
-                } catch (err) {
-                    console.error('请求失败:', err);
-                    alert(`操作失败：${err.message || '未知错误'}`);
-                    return null;
+                    return data[0];
+                } catch (error) {
+                    console.error('保存留言错误:', error);
+                    throw error;
                 }
             }
             
-            // 留言相关操作
-            saveMessage(author, content) {
-                return this.request(() => 
-                    supabase
-                        .from(this.config.messageTable)
-                        .insert({ author, content })
-                        .select()
-                        .single()
-                );
-            }
-            
-            loadMessages() {
-                return this.request(() => 
-                    supabase
+            // 从云端加载留言（独立表）
+            async loadMessages() {
+                try {
+                    const { data, error } = await supabase
                         .from(this.config.messageTable)
                         .select('*')
-                        .order('created_at', { ascending: false })
-                );
+                        .order('created_at', { ascending: false });
+                    
+                    if (error) throw error;
+                    return data || [];
+                } catch (error) {
+                    console.error('加载留言错误:', error);
+                    throw error;
+                }
             }
             
-            deleteMessage(id) {
-                return this.request(() => 
-                    supabase
+            // 删除留言（独立表）
+            async deleteMessage(id) {
+                try {
+                    const { error } = await supabase
                         .from(this.config.messageTable)
                         .delete()
-                        .eq('id', id)
-                );
+                        .eq('id', id);
+                    
+                    if (error) throw error;
+                    return true;
+                } catch (error) {
+                    console.error('删除留言错误:', error);
+                    throw error;
+                }
             }
             
-            // 图片相关操作（确保存储桶权限匹配密钥）
-            saveImage(title, base64) {
-                return new Promise(async (resolve) => {
-                    // 修复Base64转Blob
-                    const blob = await fetch(base64).then(res => res.blob());
+            // 保存图片到云端（独立存储桶+独立表）
+            async saveImage(title, imageData) {
+                try {
+                    // 将base64图片数据转换为blob
+                    const response = await fetch(imageData);
+                    const blob = await response.blob();
+                    
+                    // 生成唯一文件名（包含2518标识）
                     const fileName = `2518_${Date.now()}.jpg`;
                     
-                    // 上传文件（使用密钥对应的权限）
-                    const uploadRes = await this.request(() => 
-                        supabase
-                            .storage
-                            .from(this.config.storageBucket)
-                            .upload(fileName, blob)
-                    );
+                    // 上传到2518班专属存储桶
+                    const { data: uploadData, error: uploadError } = await supabase
+                        .storage
+                        .from(this.config.storageBucket)
+                        .upload(fileName, blob);
                     
-                    if (!uploadRes) {
-                        resolve(null);
-                        return;
-                    }
+                    if (uploadError) throw uploadError;
                     
                     // 获取公开URL
                     const { data: urlData } = supabase
@@ -570,224 +581,399 @@
                         .from(this.config.storageBucket)
                         .getPublicUrl(fileName);
                     
-                    // 保存到数据库
-                    const imgData = await this.request(() => 
-                        supabase
-                            .from(this.config.imageTable)
-                            .insert({ title, image_url: urlData.publicUrl })
-                            .select()
-                            .single()
-                    );
+                    // 保存图片信息到2518班独立表
+                    const { data, error } = await supabase
+                        .from(this.config.imageTable)
+                        .insert([
+                            { 
+                                title: title, 
+                                image_url: urlData.publicUrl,
+                                created_at: new Date().toISOString()
+                            }
+                        ])
+                        .select();
                     
-                    resolve(imgData);
-                });
+                    if (error) throw error;
+                    return data[0];
+                } catch (error) {
+                    console.error('保存图片错误:', error);
+                    throw error;
+                }
             }
             
-            loadImages() {
-                return this.request(() => 
-                    supabase
+            // 从云端加载图片（独立表）
+            async loadImages() {
+                try {
+                    const { data, error } = await supabase
                         .from(this.config.imageTable)
                         .select('*')
-                        .order('created_at', { ascending: false })
-                );
+                        .order('created_at', { ascending: false });
+                    
+                    if (error) throw error;
+                    return data || [];
+                } catch (error) {
+                    console.error('加载图片错误:', error);
+                    throw error;
+                }
             }
             
-            deleteImage(id, imageUrl) {
-                return new Promise(async (resolve) => {
+            // 删除图片（独立存储桶+独立表）
+            async deleteImage(id, imageUrl) {
+                try {
+                    // 从2518班独立表删除记录
+                    const { error: dbError } = await supabase
+                        .from(this.config.imageTable)
+                        .delete()
+                        .eq('id', id);
+                    
+                    if (dbError) throw dbError;
+                    
+                    // 从2518班专属存储桶删除文件
                     const fileName = imageUrl.split('/').pop();
+                    const { error: storageError } = await supabase
+                        .storage
+                        .from(this.config.storageBucket)
+                        .remove([fileName]);
                     
-                    // 先删数据库记录
-                    const dbRes = await this.request(() => 
-                        supabase
-                            .from(this.config.imageTable)
-                            .delete()
-                            .eq('id', id)
-                    );
+                    if (storageError) throw storageError;
                     
-                    if (!dbRes) {
-                        resolve(false);
-                        return;
-                    }
-                    
-                    // 再删存储文件
-                    const storageRes = await this.request(() => 
-                        supabase
-                            .storage
-                            .from(this.config.storageBucket)
-                            .remove([fileName])
-                    );
-                    
-                    resolve(!!storageRes);
-                });
+                    return true;
+                } catch (error) {
+                    console.error('删除图片错误:', error);
+                    throw error;
+                }
             }
         }
         
-        // 留言板功能（确保调用正确）
+        // 留言板功能（复用逻辑，对接2518独立表）
         class MessageBoard {
-            constructor(storage) {
-                this.storage = storage;
+            constructor(cloudStorage) {
+                this.cloudStorage = cloudStorage;
                 this.init();
             }
             
+            // 初始化留言板
             async init() {
                 await this.loadMessages();
-                this.bindEvents();
+                this.setupEventListeners();
             }
             
+            // 从云端加载留言
             async loadMessages() {
-                const listEl = document.getElementById('message-list');
-                listEl.innerHTML = '<div class="loading">正在加载留言...</div>';
+                const messageList = document.getElementById('message-list');
+                messageList.innerHTML = '<div class="loading">正在加载留言...</div>';
                 
-                const messages = await this.storage.loadMessages();
-                if (!messages) {
-                    listEl.innerHTML = '<div class="error">加载失败，请重试</div>';
+                try {
+                    const messages = await this.cloudStorage.loadMessages();
+                    this.renderMessages(messages);
+                } catch (error) {
+                    messageList.innerHTML = '<div class="error">加载留言失败，请刷新页面重试</div>';
+                }
+            }
+            
+            // 添加新留言
+            async addMessage(author, content) {
+                try {
+                    const newMessage = await this.cloudStorage.saveMessage(author, content);
+                    await this.loadMessages(); // 重新加载所有留言
+                    return newMessage;
+                } catch (error) {
+                    this.showErrorMessage('留言提交失败，请重试');
+                    throw error;
+                }
+            }
+            
+            // 删除留言
+            async deleteMessage(id) {
+                try {
+                    await this.cloudStorage.deleteMessage(id);
+                    await this.loadMessages(); // 重新加载所有留言
+                } catch (error) {
+                    this.showErrorMessage('删除留言失败，请重试');
+                throw error;
+                }
+            }
+            
+            // 渲染留言列表
+            renderMessages(messages) {
+                const messageList = document.getElementById('message-list');
+                
+                if (messages.length === 0) {
+                    messageList.innerHTML = '<li class="empty-message">暂无留言，快来留下第一条留言吧！</li>';
                     return;
                 }
                 
-                listEl.innerHTML = messages.length 
-                    ? messages.map(msg => `
-                        <li class="message-item" data-id="${msg.id}">
-                            <button class="message-delete" onclick="messageBoard.deleteMessage('${msg.id}')">×</button>
-                            <div class="message-header">
-                                <span class="message-author">${msg.author}</span>
-                                <span class="message-date">${new Date(msg.created_at).toLocaleString()}</span>
-                            </div>
-                            <div class="message-content">${msg.content}</div>
-                        </li>
-                    `).join('')
-                    : '<li class="empty-message">暂无留言，快来留言吧！</li>';
+                messageList.innerHTML = messages.map(message => `
+                    <li class="message-item" data-id="${message.id}">
+                        <button class="message-delete" onclick="messageBoard.deleteMessage(${message.id})">×</button>
+                        <div class="message-header">
+                            <span class="message-author">${this.escapeHtml(message.author)}</span>
+                            <span class="message-date">${this.formatDate(message.created_at)}</span>
+                        </div>
+                        <div class="message-content">${this.escapeHtml(message.content)}</div>
+                    </li>
+                `).join('');
             }
             
-            async submitMessage(author, content) {
-                if (!author || !content) return alert('请填写完整信息');
+            // 格式化日期
+            formatDate(dateString) {
+                const date = new Date(dateString);
+                return `${date.getFullYear()}-${(date.getMonth()+1).toString().padStart(2, '0')}-${date.getDate().toString().padStart(2, '0')} ${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`;
+            }
+            
+            // HTML转义，防止XSS攻击
+            escapeHtml(text) {
+                const div = document.createElement('div');
+                div.textContent = text;
+                return div.innerHTML;
+            }
+            
+            // 设置事件监听
+            setupEventListeners() {
+                document.getElementById('submit-message').addEventListener('click', () => {
+                    this.handleSubmit();
+                });
                 
-                const btn = document.getElementById('submit-message');
-                btn.disabled = true;
-                btn.textContent = '提交中...';
+                // 支持按Enter键提交
+                document.getElementById('message').addEventListener('keydown', (e) => {
+                    if (e.ctrlKey && e.key === 'Enter') {
+                        this.handleSubmit();
+                    }
+                });
+            }
+            
+            // 处理留言提交
+            async handleSubmit() {
+                const author = document.getElementById('author').value.trim();
+                const message = document.getElementById('message').value.trim();
                 
-                const res = await this.storage.saveMessage(author, content);
-                if (res) {
-                    document.getElementById('author').value = '';
-                    document.getElementById('message').value = '';
-                    await this.loadMessages();
-                    alert('提交成功！');
+                if (!author) {
+                    alert('请输入您的姓名！');
+                    document.getElementById('author').focus();
+                    return;
                 }
                 
-                btn.disabled = false;
-                btn.textContent = '提交留言';
-            }
-            
-            async deleteMessage(id) {
-                if (!confirm('确定删除？')) return;
-                const res = await this.storage.deleteMessage(id);
-                if (res) await this.loadMessages();
-            }
-            
-            bindEvents() {
-                document.getElementById('submit-message').addEventListener('click', () => {
-                    const author = document.getElementById('author').value.trim();
-                    const content = document.getElementById('message').value.trim();
-                    this.submitMessage(author, content);
-                });
+                if (!message) {
+                    alert('请输入留言内容！');
+                    document.getElementById('message').focus();
+                    return;
+                }
                 
-                document.getElementById('message').addEventListener('keydown', (e) => {
-                    if (e.ctrlKey && e.key === 'Enter') this.submitMessage(
-                        document.getElementById('author').value.trim(),
-                        document.getElementById('message').value.trim()
-                    );
-                });
+                // 禁用提交按钮防止重复提交
+                const submitBtn = document.getElementById('submit-message');
+                submitBtn.disabled = true;
+                submitBtn.textContent = '提交中...';
+                
+                try {
+                    // 添加留言
+                    await this.addMessage(author, message);
+                    
+                    // 清空表单
+                    document.getElementById('author').value = '';
+                    document.getElementById('message').value = '';
+                    
+                    // 显示成功消息
+                    this.showSuccessMessage('留言提交成功！');
+                } catch (error) {
+                    // 错误处理已在addMessage中完成
+                } finally {
+                    // 恢复提交按钮
+                    submitBtn.disabled = false;
+                    submitBtn.textContent = '提交留言';
+                }
+            }
+            
+            // 显示成功消息
+            showSuccessMessage(text) {
+                alert(text);
+            }
+            
+            // 显示错误消息
+            showErrorMessage(text) {
+                alert(text);
             }
         }
         
-        // 相册功能（确保调用正确）
+        // 相册功能（复用逻辑，对接2518独立存储桶和表）
         class Gallery {
-            constructor(storage) {
-                this.storage = storage;
+            constructor(cloudStorage) {
+                this.cloudStorage = cloudStorage;
                 this.init();
             }
             
+            // 初始化相册
             async init() {
                 await this.loadImages();
-                this.bindEvents();
+                this.setupEventListeners();
             }
             
+            // 从云端加载图片
             async loadImages() {
-                const gridEl = document.getElementById('gallery-grid');
-                gridEl.innerHTML = '<div class="loading">正在加载图片...</div>';
+                const galleryGrid = document.getElementById('gallery-grid');
+                galleryGrid.innerHTML = '<div class="loading">正在加载图片...</div>';
                 
-                const images = await this.storage.loadImages();
-                if (!images) {
-                    gridEl.innerHTML = '<div class="error">加载失败，请重试</div>';
+                try {
+                    const images = await this.cloudStorage.loadImages();
+                    this.renderImages(images);
+                } catch (error) {
+                    galleryGrid.innerHTML = '<div class="error">加载图片失败，请刷新页面重试</div>';
+                }
+            }
+            
+            // 添加新图片
+            async addImage(title, imageData) {
+                try {
+                    const newImage = await this.cloudStorage.saveImage(title, imageData);
+                    await this.loadImages(); // 重新加载所有图片
+                    return newImage;
+                } catch (error) {
+                    this.showErrorMessage('图片上传失败，请重试');
+                    throw error;
+                }
+            }
+            
+            // 删除图片
+            async deleteImage(id, imageUrl) {
+                try {
+                    await this.cloudStorage.deleteImage(id, imageUrl);
+                    await this.loadImages(); // 重新加载所有图片
+                } catch (error) {
+                    this.showErrorMessage('删除图片失败，请重试');
+                    throw error;
+                }
+            }
+            
+            // 渲染图片列表
+            renderImages(images) {
+                const galleryGrid = document.getElementById('gallery-grid');
+                
+                if (images.length === 0) {
+                    galleryGrid.innerHTML = '<div class="empty-message">暂无图片，快来上传第一张图片吧！</div>';
                     return;
                 }
                 
-                gridEl.innerHTML = images.length 
-                    ? images.map(img => `
-                        <div class="gallery-item" data-id="${img.id}">
-                            <img src="${img.image_url}" alt="${img.title}">
-                            <button class="delete-btn" onclick="gallery.deleteImage('${img.id}', '${img.image_url}')">×</button>
-                            <div style="position: absolute; bottom: 0; left: 0; right: 0; background: rgba(0,0,0,0.7); color: white; padding: 5px; font-size: 0.8rem;">
-                                ${img.title}
-                            </div>
+                galleryGrid.innerHTML = images.map(image => `
+                    <div class="gallery-item" data-id="${image.id}">
+                        <img src="${image.image_url}" alt="${this.escapeHtml(image.title)}" onerror="this.src='data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAwIiBoZWlnaHQ9IjE1MCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMjAwIiBoZWlnaHQ9IjE1MCIgZmlsbD0iI2VhZWFlYSIvPjx0ZXh0IHg9IjEwMCIgeT0iNzUiIGZvbnQtZmFtaWx5PSJBcmlhbCIgZm9udC1zaXplPSIxNCIgZmlsbD0iIzk5OSIgdGV4dC1hbmNob3I9Im1pZGRsZSI+5Zu+54mH5Zu+5bGC5LiN6IO9PC90ZXh0Pjwvc3ZnPg=='">
+                        <button class="delete-btn" onclick="gallery.deleteImage(${image.id}, '${image.image_url}')">×</button>
+                        <div style="position: absolute; bottom: 0; left: 0; right: 0; background: rgba(0,0,0,0.7); color: white; padding: 5px; font-size: 0.8rem;">
+                            ${this.escapeHtml(image.title)}
                         </div>
-                    `).join('')
-                    : '<div class="empty-message">暂无图片，快来上传吧！</div>';
+                    </div>
+                `).join('');
             }
             
-            async uploadImage(title, file) {
-                if (!title || !file) return alert('请填写标题并选择图片');
+            // HTML转义，防止XSS攻击
+            escapeHtml(text) {
+                const div = document.createElement('div');
+                div.textContent = text;
+                return div.innerHTML;
+            }
+            
+            // 设置事件监听
+            setupEventListeners() {
+                document.getElementById('upload-image').addEventListener('click', () => {
+                    this.handleUpload();
+                });
+            }
+            
+            // 处理图片上传
+            async handleUpload() {
+                const title = document.getElementById('image-title').value.trim();
+                const fileInput = document.getElementById('image-upload');
+                const file = fileInput.files[0];
                 
-                const btn = document.getElementById('upload-image');
-                btn.disabled = true;
-                btn.textContent = '上传中...';
+                if (!title) {
+                    alert('请输入图片标题！');
+                    document.getElementById('image-title').focus();
+                    return;
+                }
                 
-                // 读取文件为Base64
+                if (!file) {
+                    alert('请选择图片文件！');
+                    return;
+                }
+                
+                // 检查文件类型
+                if (!file.type.match('image.*')) {
+                    alert('请选择图片文件！');
+                    return;
+                }
+                
+                // 检查文件大小（限制为5MB）
+                if (file.size > 5 * 1024 * 1024) {
+                    alert('图片大小不能超过5MB！');
+                    return;
+                }
+                
+                // 禁用上传按钮防止重复上传
+                const uploadBtn = document.getElementById('upload-image');
+                uploadBtn.disabled = true;
+                uploadBtn.textContent = '上传中...';
+                
+                // 读取文件内容
                 const reader = new FileReader();
                 reader.onload = async (e) => {
-                    const res = await this.storage.saveImage(title, e.target.result);
-                    if (res) {
+                    try {
+                        // 添加图片
+                        await this.addImage(title, e.target.result);
+                        
+                        // 清空表单
                         document.getElementById('image-title').value = '';
                         document.getElementById('image-upload').value = '';
-                        await this.loadImages();
-                        alert('上传成功！');
+                        
+                        // 显示成功消息
+                        this.showSuccessMessage('图片上传成功！');
+                    } catch (error) {
+                        // 错误处理已在addImage中完成
+                    } finally {
+                        // 恢复上传按钮
+                        uploadBtn.disabled = false;
+                        uploadBtn.textContent = '上传图片';
                     }
-                    btn.disabled = false;
-                    btn.textContent = '上传图片';
                 };
                 reader.readAsDataURL(file);
             }
             
-            async deleteImage(id, imageUrl) {
-                if (!confirm('确定删除？')) return;
-                const res = await this.storage.deleteImage(id, imageUrl);
-                if (res) await this.loadImages();
+            // 显示成功消息
+            showSuccessMessage(text) {
+                alert(text);
             }
             
-            bindEvents() {
-                document.getElementById('upload-image').addEventListener('click', () => {
-                    const title = document.getElementById('image-title').value.trim();
-                    const file = document.getElementById('image-upload').files[0];
-                    this.uploadImage(title, file);
-                });
+            // 显示错误消息
+            showErrorMessage(text) {
+                alert(text);
             }
         }
         
-        // 导航切换
+        // 导航切换功能
         document.querySelectorAll('.nav-item').forEach(item => {
             item.addEventListener('click', function() {
-                document.querySelectorAll('.nav-item').forEach(nav => nav.classList.remove('active'));
+                document.querySelectorAll('.nav-item').forEach(nav => {
+                    nav.classList.remove('active');
+                });
+                
                 this.classList.add('active');
                 
-                document.querySelectorAll('.section').forEach(sec => sec.classList.remove('active'));
-                document.getElementById(this.getAttribute('data-target')).classList.add('active');
+                document.querySelectorAll('.section').forEach(section => {
+                    section.classList.remove('active');
+                });
+                
+                const targetId = this.getAttribute('data-target');
+                document.getElementById(targetId).classList.add('active');
             });
         });
         
-        // 初始化应用（确保存储类实例正确）
-        document.addEventListener('DOMContentLoaded', () => {
-            const storage = new CloudStorage();
-            window.messageBoard = new MessageBoard(storage);
-            window.gallery = new Gallery(storage);
+        // 初始化应用
+        document.addEventListener('DOMContentLoaded', async () => {
+            // 初始化云端存储（2518班专属）
+            const cloudStorage = new CloudStorage();
+            
+            // 初始化留言板
+            window.messageBoard = new MessageBoard(cloudStorage);
+            
+            // 初始化相册
+            window.gallery = new Gallery(cloudStorage);
         });
     </script>
 </body>
